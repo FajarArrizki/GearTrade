@@ -33,7 +33,7 @@ interface HeaderProps {
   onPageChange?: (page: string) => void
 }
 
-export default function Header({ title = 'GearTrade', currentAccount, showAccountSelector = false, currentPage = 'comprehensive', onPageChange }: HeaderProps) {
+export default function Header({ title = 'Trade', currentAccount, showAccountSelector = false, currentPage = 'comprehensive', onPageChange }: HeaderProps) {
   const { user, loading, authEnabled, logout } = useAuth()
 
   const handleSignUp = async () => {
@@ -44,7 +44,7 @@ export default function Header({ title = 'GearTrade', currentAccount, showAccoun
   }
 
   const navItems = [
-    { id: 'comprehensive', label: 'GearTrade', title: 'GearTrade' },
+    { id: 'comprehensive', label: 'Trade', title: 'Trade' },
     { id: 'leaderboard', label: 'Leaderboard', title: 'Leaderboard' },
     { id: 'prompt-management', label: 'Prompts', title: 'Prompt Templates' },
     { id: 'trader-management', label: 'Settings', title: 'AI Trader Management' },
@@ -54,10 +54,16 @@ export default function Header({ title = 'GearTrade', currentAccount, showAccoun
         <header className="fixed top-0 left-0 right-0 z-50 w-full border-b bg-background/50 backdrop-blur supports-[backdrop-filter]:bg-background/60">
           <div className="w-full py-4 px-4 flex items-center justify-between">
         <div className="flex items-center gap-4">
-          <img src="/logo_app.png" alt="Logo" className="h-8 w-8 object-contain" onError={(e) => {
-            console.error('Logo failed to load:', e.currentTarget.src)
-            e.currentTarget.style.display = 'none'
-          }} />
+          <button
+            onClick={() => onPageChange?.('comprehensive')}
+            className="flex items-center justify-center hover:opacity-80 transition-opacity cursor-pointer"
+            title="Go to Home"
+          >
+            <img src="/logo_app.png" alt="Logo" className="h-8 w-8 object-contain" onError={(e) => {
+              console.error('Logo failed to load:', e.currentTarget.src)
+              e.currentTarget.style.display = 'none'
+            }} />
+          </button>
           <h1 className="text-xl font-bold">{title}</h1>
           
           {/* Navigation items next to logo */}

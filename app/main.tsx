@@ -73,7 +73,7 @@ interface Order { id: number; order_no: string; symbol: string; name: string; ma
 interface Trade { id: number; order_id: number; account_id: number; symbol: string; name: string; market: string; side: string; price: number; quantity: number; commission: number; trade_time: string }
 
 const PAGE_TITLES: Record<string, string> = {
-  comprehensive: 'GearTrade',
+  comprehensive: 'Trade',
   leaderboard: 'Leaderboard',
   'prompt-management': 'Prompt Templates',
   'trader-management': 'AI Trader Management',
@@ -739,8 +739,8 @@ function App() {
     )
   }
 
-  // Always use "GearTrade" as title
-  const pageTitle = 'GearTrade'
+  // Always use "Trade" as title
+  const pageTitle = 'Trade'
 
   // Handle page change and update URL
   const handlePageChange = useCallback((page: string) => {

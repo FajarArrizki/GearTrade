@@ -191,6 +191,9 @@ wrangler.toml
 *.pem
 *.secret
 
+# GitHub token
+.github.token
+
 # Foundry
 geartradecontract/out/
 geartradecontract/cache/

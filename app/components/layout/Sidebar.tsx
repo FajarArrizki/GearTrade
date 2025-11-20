@@ -21,7 +21,7 @@ export default function Sidebar({ currentPage = 'comprehensive', onPageChange, o
                 : 'hover:bg-muted text-muted-foreground'
             }`}
             onClick={() => onPageChange?.('comprehensive')}
-            title="GearTrade"
+            title="Trade"
           >
             <BarChart3 className="w-5 h-5" />
           </button>
@@ -81,10 +81,10 @@ export default function Sidebar({ currentPage = 'comprehensive', onPageChange, o
                 : 'hover:bg-muted text-muted-foreground'
             }`}
             onClick={() => onPageChange?.('comprehensive')}
-            title="GearTrade"
+            title="Trade"
           >
             <BarChart3 className="w-5 h-5" />
-            <span className="text-xs mt-1">GearTrade</span>
+            <span className="text-xs mt-1">Trade</span>
           </button>
           <button
             className={`flex flex-col items-center justify-center w-12 h-12 rounded-lg transition-colors ${

@@ -9,7 +9,7 @@ import {
   ResponsiveContainer
 } from 'recharts'
 import { Card } from '@/components/ui/card'
-import { getModelLogo, getModelChartLogo, getModelColor } from './logoAssets'
+import { getModelChartLogo } from './logoAssets'
 import FlipNumber from './FlipNumber'
 import { useTradingMode } from '@/contexts/TradingModeContext'
 
@@ -61,6 +61,7 @@ export default function AssetCurve({
   const [liveAccountTotals, setLiveAccountTotals] = useState<Map<number, number>>(new Map())
   const [logoPulseMap, setLogoPulseMap] = useState<Map<number, number>>(new Map())
   const [hoveredAccountId, setHoveredAccountId] = useState<number | null>(null)
+  const [viewMode, setViewMode] = useState<'balance' | 'percentage'>('balance')
 
   const storeCache = useCallback((tf: Timeframe, nextData: AssetCurveData[]) => {
     const cacheKey = `${tf}_${tradingMode}`
@@ -189,7 +190,7 @@ export default function AssetCurve({
       return
     }
 
-    if (isWebSocketAvailable) {
+    if (isWebSocketAvailable && wsRef.current) {
       if (!hadCache) setLoading(true)
       setError(null)
       wsRef.current.send(JSON.stringify({
@@ -258,7 +259,7 @@ export default function AssetCurve({
       return dateA - dateB
     })
 
-    const chartData = timestamps.map((ts, index) => {
+    const chartData = timestamps.map((ts) => {
       const date = parseTimestamp(ts)
       const formattedTime = date.toLocaleString('en-US', {
         month: '2-digit',
@@ -268,14 +269,16 @@ export default function AssetCurve({
         hour12: false
       })
 
-      return {
+      const dataPoint: Record<string, number | null | string> = {
         timestamp: ts,
         formattedTime,
-        ...uniqueUsers.reduce((acc, username) => {
-          acc[username] = groupedData[ts][username] ?? null
-          return acc
-        }, {} as Record<string, number | null>)
       }
+      
+      uniqueUsers.forEach((username) => {
+        dataPoint[username] = groupedData[ts][username] ?? null
+      })
+
+      return dataPoint
     })
 
     const accountSummaries = uniqueUsers.map((username) => {
@@ -298,7 +301,7 @@ export default function AssetCurve({
     return { chartData, accountSummaries, uniqueUsers, userAccountMap }
   }, [data, timeframe])
 
-  // Apply live updates to the last data point only
+  // Apply live updates to the last data point only and convert to percentage if needed
   const processedData = useMemo(() => {
     const { chartData, accountSummaries, uniqueUsers, userAccountMap } = baseProcessedData
 
@@ -318,6 +321,36 @@ export default function AssetCurve({
       updatedChartData[updatedChartData.length - 1] = lastPoint
     }
 
+    // Convert to percentage if viewMode is percentage
+    let finalChartData: Record<string, number | null | string>[] = updatedChartData
+    if (viewMode === 'percentage' && updatedChartData.length > 0) {
+      // Calculate baseline (first value) for each user
+      const baselines = new Map<string, number>()
+      uniqueUsers.forEach((username) => {
+        const firstValue = updatedChartData.find(point => 
+          typeof (point as Record<string, any>)[username] === 'number' && (point as Record<string, any>)[username] !== null
+        )?.[username] as number | undefined
+        if (typeof firstValue === 'number') {
+          baselines.set(username, firstValue)
+        }
+      })
+
+      // Convert all values to percentage change from baseline
+      finalChartData = updatedChartData.map(point => {
+        const convertedPoint: Record<string, number | null | string> = { ...point }
+        uniqueUsers.forEach((username) => {
+          const value = (point as Record<string, any>)[username] as number | null | undefined
+          const baseline = baselines.get(username)
+          if (typeof value === 'number' && typeof baseline === 'number' && baseline > 0) {
+            convertedPoint[username] = ((value - baseline) / baseline) * 100
+          } else {
+            convertedPoint[username] = null
+          }
+        })
+        return convertedPoint
+      })
+    }
+
     // Update account summaries with live data
     const updatedAccountSummaries = accountSummaries.map(account => {
       const liveOverride = account.accountId !== undefined ? liveAccountTotals.get(account.accountId) : undefined
@@ -330,12 +363,12 @@ export default function AssetCurve({
     const rankedAccounts = updatedAccountSummaries.slice().sort((a, b) => b.assets - a.assets)
 
     return {
-      chartData: updatedChartData,
+      chartData: finalChartData,
       accountSummaries: updatedAccountSummaries,
       uniqueUsers,
       rankedAccounts
     }
-  }, [baseProcessedData, liveAccountTotals])
+  }, [baseProcessedData, liveAccountTotals, viewMode])
 
   const { chartData, accountSummaries, uniqueUsers, rankedAccounts } = processedData
 
@@ -360,7 +393,7 @@ export default function AssetCurve({
 
   // Calculate Y-axis domain with single trader scaling
   const yAxisDomain = useMemo(() => {
-    if (!chartData.length) return [0, 100000]
+    if (!chartData.length) return viewMode === 'percentage' ? [-50, 50] : [0, 100000]
 
     let min = Infinity
     let max = -Infinity
@@ -375,7 +408,7 @@ export default function AssetCurve({
 
     chartData.forEach(point => {
       usersToConsider.forEach(username => {
-        const value = point[username]
+        const value = (point as Record<string, any>)[username] as number | null | undefined
         if (typeof value === 'number' && !isNaN(value)) {
           min = Math.min(min, value)
           max = Math.max(max, value)
@@ -383,18 +416,22 @@ export default function AssetCurve({
       })
     })
 
-    if (min === Infinity || max === -Infinity) return [0, 100000]
+    if (min === Infinity || max === -Infinity) {
+      return viewMode === 'percentage' ? [-50, 50] : [0, 100000]
+    }
 
     // Use different padding for single trader vs all traders view
     const range = max - min
     const paddingPercent = activeLegendAccountId ? 0.15 : 0.05 // 15% for single trader, 5% for all traders
-    const padding = Math.max(range * paddingPercent, 50)
+    const padding = viewMode === 'percentage' 
+      ? Math.max(range * paddingPercent, 5) // 5% minimum padding for percentage
+      : Math.max(range * paddingPercent, 50)
 
-    const paddedMin = Math.max(0, min - padding)
+    const paddedMin = viewMode === 'percentage' ? min - padding : Math.max(0, min - padding)
     const paddedMax = max + padding
 
     return [paddedMin, paddedMax]
-  }, [chartData, uniqueUsers, activeLegendAccountId, accountSummaries, highlightAccountId])
+  }, [chartData, uniqueUsers, activeLegendAccountId, accountSummaries, highlightAccountId, viewMode])
 
   const accountMeta = useMemo(() => {
     const meta = new Map<string, { accountId?: number; color: string; logo?: { src: string; alt: string; color?: string } }>()
@@ -416,16 +453,16 @@ export default function AssetCurve({
     const accountId = meta?.accountId
     const logo = meta?.logo
 
-    return (props: { cx?: number; cy?: number; index?: number; value?: number }) => {
+    return (props: { cx?: number; cy?: number; index?: number; value?: number; payload?: any }) => {
       const { cx, cy, index, value } = props
       if (cx == null || cy == null || index == null || index !== chartData.length - 1) {
-        return null
+        return <g />
       }
-      if (!meta || !logo) return null
+      if (!meta || !logo) return <g />
 
       // Single trader view: hide others completely
       if (activeLegendAccountId && accountId !== activeLegendAccountId) {
-        return null
+        return <g />
       }
 
       const isHovered = hoveredAccountId === accountId
@@ -518,18 +555,24 @@ export default function AssetCurve({
                 whiteSpace: 'nowrap',
               }}
             >
-              <FlipNumber
-                value={typeof value === 'number' ? value : 0}
-                prefix="$"
-                decimals={2}
-                className="text-white"
-              />
+              {viewMode === 'percentage' ? (
+                <span className="text-white text-xs font-bold">
+                  {typeof value === 'number' ? `${value >= 0 ? '+' : ''}${value.toFixed(2)}%` : '0%'}
+                </span>
+              ) : (
+                <FlipNumber
+                  value={typeof value === 'number' ? value : 0}
+                  prefix="$"
+                  decimals={2}
+                  className="text-white"
+                />
+              )}
             </div>
           </foreignObject>
         </g>
       )
     }
-  }, [accountMeta, chartData.length, activeLegendAccountId, logoPulseMap, handleLegendClick, hoveredAccountId])
+  }, [accountMeta, chartData.length, activeLegendAccountId, logoPulseMap, handleLegendClick, hoveredAccountId, viewMode])
 
   // Custom Cursor Component (vertical dashed line)
   const CustomCursor = useCallback(({ points, height }: any) => {
@@ -563,11 +606,19 @@ export default function AssetCurve({
 
     if (typeof value !== 'number') return null
 
-    // Format dengan titik sebagai pemisah ribuan (contoh: $2.683,964)
-    const formattedValue = value.toLocaleString('de-DE', { 
-      minimumFractionDigits: 2, 
-      maximumFractionDigits: 2 
-    })
+    let displayValue: string
+    if (viewMode === 'percentage') {
+      // Format percentage with sign
+      const sign = value >= 0 ? '+' : ''
+      displayValue = `${sign}${value.toFixed(2)}%`
+    } else {
+      // Format dengan titik sebagai pemisah ribuan (contoh: $2.683,964)
+      const formattedValue = value.toLocaleString('de-DE', { 
+        minimumFractionDigits: 2, 
+        maximumFractionDigits: 2 
+      })
+      displayValue = `$${formattedValue}`
+    }
 
     return (
       <div
@@ -583,15 +634,44 @@ export default function AssetCurve({
           display: 'inline-block',
         }}
       >
-        ${formattedValue}
+        {displayValue}
       </div>
     )
-  }, [])
+  }, [viewMode])
 
   return (
     <div className="h-full min-h-[320px] max-h-[800px] min-w-[400px] max-w-full flex flex-col">
       <div className="flex-1 min-h-0 flex flex-col">
         <div className="flex-1 relative min-h-[300px] max-h-[780px]">
+          {/* View Mode Toggle - Top Left */}
+          {!loading && chartData.length > 0 && (
+            <div className="absolute top-4 left-4 z-10">
+              <div className="flex border border-black rounded overflow-hidden bg-white">
+                <button
+                  onClick={() => setViewMode('balance')}
+                  className={`px-3 py-1.5 text-sm font-medium transition-colors ${
+                    viewMode === 'balance'
+                      ? 'bg-white text-black'
+                      : 'bg-black text-white'
+                  }`}
+                  title="View in Balance"
+                >
+                  $
+                </button>
+                <button
+                  onClick={() => setViewMode('percentage')}
+                  className={`px-3 py-1.5 text-sm font-medium transition-colors ${
+                    viewMode === 'percentage'
+                      ? 'bg-white text-black'
+                      : 'bg-black text-white'
+                  }`}
+                  title="View in Percentage"
+                >
+                  %
+                </button>
+              </div>
+            </div>
+          )}
           {loading ? (
             <div className="flex items-center justify-center h-full">
               <div className="text-muted-foreground">Loading...</div>
@@ -601,7 +681,7 @@ export default function AssetCurve({
               <ResponsiveContainer width="100%" height="100%" style={{ outline: 'none' }}>
                 <LineChart
                   data={chartData}
-                  margin={{ top: 25, right: 165, left: 20, bottom: 45 }}
+                  margin={{ top: 10, right: 165, left: 20, bottom: 45 }}
                   onClick={handleChartClick}
                   onMouseLeave={() => setHoveredAccountId(null)}
                   style={{ outline: 'none' }}
@@ -620,13 +700,13 @@ export default function AssetCurve({
                     domain={yAxisDomain}
                     tickFormatter={(value) => {
                       const num = Number(value)
+                      if (viewMode === 'percentage') {
+                        const sign = num >= 0 ? '+' : ''
+                        return `${sign}${num.toFixed(0)}%`
+                      }
                       if (num >= 1000000) return `$${(num / 1000000).toFixed(1)}M`
                       if (num >= 1000) return `$${(num / 1000).toFixed(0)}K`
                       return `$${num.toFixed(0)}`
-                    }}
-                    animationDuration={0}
-                    style={{
-                      transition: 'all 0.6s cubic-bezier(0.4, 0.0, 0.2, 1)'
                     }}
                   />
                   <Tooltip

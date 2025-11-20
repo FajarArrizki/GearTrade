@@ -8,7 +8,7 @@ interface NavbarProps {
 
 export default function Navbar({ currentPage = 'comprehensive', onPageChange }: NavbarProps) {
   const navItems = [
-    { id: 'comprehensive', icon: BarChart3, label: 'GearTrade', title: 'GearTrade' },
+    { id: 'comprehensive', icon: BarChart3, label: 'Trade', title: 'Trade' },
     { id: 'prompt-management', icon: NotebookPen, label: 'Prompts', title: 'Prompt Templates' },
     { id: 'trader-management', icon: Settings, label: 'Settings', title: 'AI Trader Management' },
   ]
