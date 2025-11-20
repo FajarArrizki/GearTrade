@@ -10,7 +10,6 @@ import {
 } from 'recharts'
 import { Card } from '@/components/ui/card'
 import { getModelChartLogo } from './logoAssets'
-import FlipNumber from './FlipNumber'
 import { useTradingMode } from '@/contexts/TradingModeContext'
 
 interface AssetCurveData {
@@ -37,6 +36,54 @@ type Timeframe = '5m' | '1h' | '1d'
 const DEFAULT_TIMEFRAME: Timeframe = '5m'
 const CACHE_STALE_MS = 45_000
 
+const TIME_RANGE_OPTIONS = [
+  { id: 'all', label: 'ALL' },
+  { id: '24h', label: '24H' },
+] as const
+
+type TimeRange = typeof TIME_RANGE_OPTIONS[number]['id']
+
+const TIME_RANGE_MS: Record<Exclude<TimeRange, 'all'>, number> = {
+  '24h': 24 * 60 * 60 * 1000,
+}
+
+const formatDisplayValue = (value: number, mode: 'balance' | 'percentage'): string => {
+  if (mode === 'percentage') {
+    const sign = value >= 0 ? '+' : ''
+    return `${sign}${value.toFixed(2)}%`
+  }
+
+  if (value >= 1_000_000) return `$${(value / 1_000_000).toFixed(1)}M`
+
+  if (value >= 1_000) {
+    const thousands = value / 1_000
+    const precision =
+      value % 1_000 === 0
+        ? 0
+        : thousands >= 100
+          ? 0
+          : thousands >= 10
+            ? 1
+            : 2
+    return `$${thousands.toFixed(precision)}K`
+  }
+
+  return `$${value.toFixed(0)}`
+}
+
+const parsePointTimestamp = (value?: string | number): number | null => {
+  if (value == null) return null
+  if (typeof value === 'number') {
+    return value <= 10_000_000_000 ? value * 1000 : value
+  }
+  if (/^\d+$/.test(value)) {
+    const numeric = Number(value)
+    return value.length <= 10 ? numeric * 1000 : numeric
+  }
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? null : date.getTime()
+}
+
 interface TimeframeCacheEntry {
   data: AssetCurveData[]
   lastFetched: number
@@ -56,12 +103,13 @@ export default function AssetCurve({
   const [data, setData] = useState<AssetCurveData[]>(initialData && initialData.length > 0 ? initialData : [])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [isInitialized, setIsInitialized] = useState(initialData && initialData.length > 0 ? true : false)
+  const [, setIsInitialized] = useState(initialData && initialData.length > 0 ? true : false)
   const cacheRef = useState(new Map<string, TimeframeCacheEntry>())[0]
   const [liveAccountTotals, setLiveAccountTotals] = useState<Map<number, number>>(new Map())
   const [logoPulseMap, setLogoPulseMap] = useState<Map<number, number>>(new Map())
   const [hoveredAccountId, setHoveredAccountId] = useState<number | null>(null)
   const [viewMode, setViewMode] = useState<'balance' | 'percentage'>('balance')
+  const [timeRange, setTimeRange] = useState<TimeRange>('all')
 
   const storeCache = useCallback((tf: Timeframe, nextData: AssetCurveData[]) => {
     const cacheKey = `${tf}_${tradingMode}`
@@ -360,17 +408,27 @@ export default function AssetCurve({
       }
     })
 
-    const rankedAccounts = updatedAccountSummaries.slice().sort((a, b) => b.assets - a.assets)
-
     return {
       chartData: finalChartData,
       accountSummaries: updatedAccountSummaries,
-      uniqueUsers,
-      rankedAccounts
+      uniqueUsers
     }
   }, [baseProcessedData, liveAccountTotals, viewMode])
 
-  const { chartData, accountSummaries, uniqueUsers, rankedAccounts } = processedData
+  const { chartData, accountSummaries, uniqueUsers } = processedData
+
+  const activeChartData = useMemo(() => {
+    if (!chartData.length || timeRange === 'all') return chartData
+    const rangeMs = TIME_RANGE_MS[timeRange as Exclude<TimeRange, 'all'>]
+    if (!rangeMs) return chartData
+    const now = Date.now()
+    const filtered = chartData.filter((point) => {
+      const ts = parsePointTimestamp(point.timestamp as string | number | undefined)
+      if (!ts) return false
+      return now - ts <= rangeMs
+    })
+    return filtered.length ? filtered : chartData
+  }, [chartData, timeRange])
 
   const handleLegendClick = useCallback((accountId: number | 'all') => {
     if (!onHighlightAccountChange) return
@@ -393,7 +451,7 @@ export default function AssetCurve({
 
   // Calculate Y-axis domain with single trader scaling
   const yAxisDomain = useMemo(() => {
-    if (!chartData.length) return viewMode === 'percentage' ? [-50, 50] : [0, 100000]
+    if (!activeChartData.length) return viewMode === 'percentage' ? [-50, 50] : [0, 100000]
 
     let min = Infinity
     let max = -Infinity
@@ -406,7 +464,7 @@ export default function AssetCurve({
         })
       : uniqueUsers
 
-    chartData.forEach(point => {
+    activeChartData.forEach(point => {
       usersToConsider.forEach(username => {
         const value = (point as Record<string, any>)[username] as number | null | undefined
         if (typeof value === 'number' && !isNaN(value)) {
@@ -431,7 +489,7 @@ export default function AssetCurve({
     const paddedMax = max + padding
 
     return [paddedMin, paddedMax]
-  }, [chartData, uniqueUsers, activeLegendAccountId, accountSummaries, highlightAccountId, viewMode])
+  }, [activeChartData, uniqueUsers, activeLegendAccountId, accountSummaries, highlightAccountId, viewMode])
 
   const accountMeta = useMemo(() => {
     const meta = new Map<string, { accountId?: number; color: string; logo?: { src: string; alt: string; color?: string } }>()
@@ -455,7 +513,7 @@ export default function AssetCurve({
 
     return (props: { cx?: number; cy?: number; index?: number; value?: number; payload?: any }) => {
       const { cx, cy, index, value } = props
-      if (cx == null || cy == null || index == null || index !== chartData.length - 1) {
+      if (cx == null || cy == null || index == null || index !== activeChartData.length - 1) {
         return <g />
       }
       if (!meta || !logo) return <g />
@@ -539,40 +597,33 @@ export default function AssetCurve({
           <foreignObject
             x={labelX}
             y={labelY}
-            width={120}
-            height={18}
+            width={110}
+            height={22}
             style={{ overflow: 'visible', pointerEvents: 'none' }}
           >
             <div
-              className="px-3 py-1 text-xs font-bold transition-opacity duration-150 ease-out"
+              className="px-3 py-0.5 text-[11px] font-semibold tracking-[0.08em]"
               style={{
                 backgroundColor: color,
                 color: '#fff',
-                boxShadow: '0 4px 8px rgba(0,0,0,0.12)',
+                boxShadow: '0 6px 12px rgba(0,0,0,0.16)',
                 opacity: shouldHighlight ? 1 : 0.45,
-                borderRadius: '12px',
-                display: 'inline-block',
+                borderRadius: '9999px',
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
                 whiteSpace: 'nowrap',
+                minWidth: '72px',
+                maxWidth: '100px',
               }}
             >
-              {viewMode === 'percentage' ? (
-                <span className="text-white text-xs font-bold">
-                  {typeof value === 'number' ? `${value >= 0 ? '+' : ''}${value.toFixed(2)}%` : '0%'}
-                </span>
-              ) : (
-                <FlipNumber
-                  value={typeof value === 'number' ? value : 0}
-                  prefix="$"
-                  decimals={2}
-                  className="text-white"
-                />
-              )}
+              {formatDisplayValue(typeof value === 'number' ? value : 0, viewMode)}
             </div>
           </foreignObject>
         </g>
       )
     }
-  }, [accountMeta, chartData.length, activeLegendAccountId, logoPulseMap, handleLegendClick, hoveredAccountId, viewMode])
+  }, [accountMeta, activeChartData.length, activeLegendAccountId, logoPulseMap, handleLegendClick, hoveredAccountId, viewMode])
 
   // Custom Cursor Component (vertical dashed line)
   const CustomCursor = useCallback(({ points, height }: any) => {
@@ -606,19 +657,7 @@ export default function AssetCurve({
 
     if (typeof value !== 'number') return null
 
-    let displayValue: string
-    if (viewMode === 'percentage') {
-      // Format percentage with sign
-      const sign = value >= 0 ? '+' : ''
-      displayValue = `${sign}${value.toFixed(2)}%`
-    } else {
-      // Format dengan titik sebagai pemisah ribuan (contoh: $2.683,964)
-      const formattedValue = value.toLocaleString('de-DE', { 
-        minimumFractionDigits: 2, 
-        maximumFractionDigits: 2 
-      })
-      displayValue = `$${formattedValue}`
-    }
+    const displayValue = formatDisplayValue(value, viewMode)
 
     return (
       <div
@@ -640,35 +679,64 @@ export default function AssetCurve({
   }, [viewMode])
 
   return (
-    <div className="h-full min-h-[320px] max-h-[800px] min-w-[400px] max-w-full flex flex-col">
+    <div className="h-full min-h-[320px] max-h-[800px] min-w-[400px] max-w-full flex flex-col m-[1px]">
       <div className="flex-1 min-h-0 flex flex-col">
         <div className="flex-1 relative min-h-[300px] max-h-[780px]">
           {/* View Mode Toggle - Top Left */}
-          {!loading && chartData.length > 0 && (
-            <div className="absolute top-4 left-4 z-10">
-              <div className="flex border border-black rounded overflow-hidden bg-white">
-                <button
-                  onClick={() => setViewMode('balance')}
-                  className={`px-3 py-1.5 text-sm font-medium transition-colors ${
-                    viewMode === 'balance'
-                      ? 'bg-white text-black'
-                      : 'bg-black text-white'
-                  }`}
-                  title="View in Balance"
-                >
-                  $
-                </button>
-                <button
-                  onClick={() => setViewMode('percentage')}
-                  className={`px-3 py-1.5 text-sm font-medium transition-colors ${
-                    viewMode === 'percentage'
-                      ? 'bg-white text-black'
-                      : 'bg-black text-white'
-                  }`}
-                  title="View in Percentage"
-                >
-                  %
-                </button>
+          {!loading && activeChartData.length > 0 && (
+            <div
+              className="absolute z-10 flex items-center justify-between pointer-events-none"
+              style={{ top: '0px', left: '0px', right: '0px' }}
+            >
+              <div className="pointer-events-auto">
+                <div className="flex border border-black rounded-md overflow-hidden bg-white shadow-sm">
+                  <button
+                    onClick={() => setViewMode('balance')}
+                    className={`px-3 py-1 text-xs font-semibold tracking-[0.15em] transition-colors uppercase ${
+                      viewMode === 'balance'
+                        ? 'bg-white text-black'
+                        : 'bg-black text-white'
+                    }`}
+                    title="View in Balance"
+                  >
+                    $
+                  </button>
+                  <button
+                    onClick={() => setViewMode('percentage')}
+                    className={`px-3 py-1 text-xs font-semibold tracking-[0.15em] transition-colors uppercase ${
+                      viewMode === 'percentage'
+                        ? 'bg-white text-black'
+                        : 'bg-black text-white'
+                    }`}
+                    title="View in Percentage"
+                  >
+                    %
+                  </button>
+                </div>
+              </div>
+
+              <p className="text-[11px] font-black tracking-[0.35em] uppercase text-center whitespace-nowrap">
+                Average Total Account Value
+              </p>
+
+              <div className="pointer-events-auto">
+                <div className="flex border border-black rounded-md overflow-hidden bg-white shadow-sm">
+                  {TIME_RANGE_OPTIONS.map((option) => {
+                    const isActive = timeRange === option.id
+                    return (
+                      <button
+                        key={option.id}
+                        onClick={() => setTimeRange(option.id)}
+                        className={`px-3 py-1 text-xs font-semibold tracking-[0.15em] transition-colors uppercase ${
+                          isActive ? 'bg-black text-white' : 'bg-white text-black'
+                        }`}
+                        title={`Show ${option.label} data`}
+                      >
+                        {option.label}
+                      </button>
+                    )
+                  })}
+                </div>
               </div>
             </div>
           )}
@@ -680,8 +748,8 @@ export default function AssetCurve({
             <>
               <ResponsiveContainer width="100%" height="100%" style={{ outline: 'none' }}>
                 <LineChart
-                  data={chartData}
-                  margin={{ top: 10, right: 165, left: 20, bottom: 45 }}
+                  data={activeChartData}
+                  margin={{ top: 50, right: 100, left: 1, bottom: 1 }}
                   onClick={handleChartClick}
                   onMouseLeave={() => setHoveredAccountId(null)}
                   style={{ outline: 'none' }}
@@ -692,21 +760,18 @@ export default function AssetCurve({
                     dataKey="formattedTime"
                     stroke="#333333"
                     fontSize={12}
-                    interval={Math.ceil(chartData.length / 6)}
+                    tickMargin={5}
+                    interval={Math.ceil(activeChartData.length / 6)}
                   />
                   <YAxis
                     stroke="#333333"
                     fontSize={12}
                     domain={yAxisDomain}
+                    tickMargin={10}
+                    minTickGap={20}
                     tickFormatter={(value) => {
                       const num = Number(value)
-                      if (viewMode === 'percentage') {
-                        const sign = num >= 0 ? '+' : ''
-                        return `${sign}${num.toFixed(0)}%`
-                      }
-                      if (num >= 1000000) return `$${(num / 1000000).toFixed(1)}M`
-                      if (num >= 1000) return `$${(num / 1000).toFixed(0)}K`
-                      return `$${num.toFixed(0)}`
+                      return formatDisplayValue(num, viewMode)
                     }}
                   />
                   <Tooltip

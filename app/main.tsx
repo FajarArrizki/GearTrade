@@ -232,29 +232,37 @@ function App() {
   // DUMMY DATA - Generate dummy asset curve data for chart
   const generateDummyAssetCurves = (): any[] => {
     const now = Date.now()
+    const points = 288 // 24h of 5m data
     const curves: any[] = []
-    const initialValue = 10000
-    
-    // Generate 24 hours of 5-minute data points (288 points)
-    for (let i = 287; i >= 0; i--) {
-      const timestamp = now - (i * 5 * 60 * 1000)
-      const hoursAgo = i / 12
-      const variation = Math.sin(hoursAgo * 0.5) * 500 + Math.random() * 200 - 100
-      const totalAssets = initialValue + variation + (hoursAgo * 50)
+    const initialValue = 10_000
+    let currentValue = initialValue
+
+    for (let i = points - 1; i >= 0; i--) {
+      const timestamp = now - i * 5 * 60 * 1000
+      const noise = (Math.random() - 0.5) * 180 // short-term chop
+      const slowDrift = Math.sin((points - i) / 32) * 60 // soft intraday wave
+      const volatility = Math.sin((points - i) / 6) * 25 // higher frequency wiggle
+
+      currentValue += noise + slowDrift + volatility
+      currentValue = Math.max(9_400, Math.min(10_800, currentValue))
+
+      const cash = currentValue * 0.68
+      const positionsValue = currentValue - cash
       
       curves.push({
         timestamp,
         datetime_str: new Date(timestamp).toISOString(),
         date: new Date(timestamp).toISOString().split('T')[0],
         account_id: 1,
-        total_assets: Math.max(9500, totalAssets),
-        cash: 7500,
-        positions_value: totalAssets - 7500,
-        is_initial: i === 287,
+        total_assets: Number(currentValue.toFixed(2)),
+        cash: Number(cash.toFixed(2)),
+        positions_value: Number(positionsValue.toFixed(2)),
+        is_initial: i === points - 1,
         user_id: 1,
         username: 'GPT Trader',
       })
     }
+
     return curves
   }
   const [allAssetCurves, setAllAssetCurves] = useState<any[]>(generateDummyAssetCurves())

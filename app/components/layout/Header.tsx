@@ -59,10 +59,10 @@ export default function Header({ title = 'Trade', currentAccount, showAccountSel
             className="flex items-center justify-center hover:opacity-80 transition-opacity cursor-pointer"
             title="Go to Home"
           >
-            <img src="/logo_app.png" alt="Logo" className="h-8 w-8 object-contain" onError={(e) => {
-              console.error('Logo failed to load:', e.currentTarget.src)
-              e.currentTarget.style.display = 'none'
-            }} />
+          <img src="/logo_app.png" alt="Logo" className="h-8 w-8 object-contain" onError={(e) => {
+            console.error('Logo failed to load:', e.currentTarget.src)
+            e.currentTarget.style.display = 'none'
+          }} />
           </button>
           <h1 className="text-xl font-bold">{title}</h1>
           
